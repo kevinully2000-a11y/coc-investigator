@@ -98,7 +98,7 @@ export default function App() {
       </nav>
 
       {/* Main Content */}
-      <main className="max-w-5xl mx-auto px-4 py-8">
+      <main className="max-w-5xl mx-auto px-6 sm:px-10 py-8">
         {/* Home */}
         {tab === 'home' && (
           <div className="flex flex-col items-center justify-center min-h-[70vh] text-center space-y-10 px-6 animate-fade-in-up">
@@ -137,9 +137,11 @@ export default function App() {
               </Button>
             </div>
 
-            <p className="text-xs text-[hsl(var(--muted-foreground))] mt-16 font-mono opacity-40 tracking-[0.25em] italic">
-              &ldquo; Ph&rsquo;nglui mglw&rsquo;nafh Cthulhu R&rsquo;lyeh wgah&rsquo;nagl fhtagn &rdquo;
-            </p>
+            <div className="pt-10">
+              <p className="text-xs text-[hsl(var(--muted-foreground))] font-mono opacity-40 tracking-[0.25em] italic">
+                &ldquo; Ph&rsquo;nglui mglw&rsquo;nafh Cthulhu R&rsquo;lyeh wgah&rsquo;nagl fhtagn &rdquo;
+              </p>
+            </div>
           </div>
         )}
 

@@ -385,16 +385,76 @@ export function speakText(text: string) {
   processSpeechQueue();
 }
 
+// Pre-generated audio buffer ready for immediate playback
+let nextBuffer: { audioBuffer: AudioBuffer } | null = null;
+let isPreGenerating = false;
+
+async function preGenerateNext() {
+  if (isPreGenerating || speechQueue.length === 0 || !ttsInstance || !speechEnabled) return;
+  isPreGenerating = true;
+  const text = speechQueue.shift()!;
+  try {
+    const audio = await ttsInstance.generate(text, { voice: TTS_VOICE });
+    const pcmData = audio?.audio;
+    if (pcmData && pcmData.length > 0 && speechEnabled) {
+      const ctx = getAudioContext();
+      const sampleRate = audio.sampling_rate || 24000;
+      const floatData = pcmData instanceof Float32Array ? pcmData : new Float32Array(pcmData);
+      const audioBuffer = ctx.createBuffer(1, floatData.length, sampleRate);
+      audioBuffer.copyToChannel(floatData, 0);
+      nextBuffer = { audioBuffer };
+    }
+  } catch { /* skip failed pre-generation */ }
+  isPreGenerating = false;
+}
+
+function playBuffer(audioBuffer: AudioBuffer) {
+  const ctx = getAudioContext();
+  const source = ctx.createBufferSource();
+  source.buffer = audioBuffer;
+
+  const gain = ctx.createGain();
+  gain.gain.value = 0.9;
+  source.connect(gain);
+  gain.connect(ctx.destination);
+
+  currentSourceNode = source;
+
+  // Start pre-generating the next sentence while this one plays
+  preGenerateNext();
+
+  source.onended = () => {
+    currentSourceNode = null;
+    isSpeaking = false;
+    processSpeechQueue();
+  };
+
+  source.start();
+}
+
 async function processSpeechQueue() {
-  if (isSpeaking || speechQueue.length === 0) return;
+  if (isSpeaking || (speechQueue.length === 0 && !nextBuffer)) return;
   if (!ttsInstance) {
     processSpeechQueueFallback();
     return;
   }
 
   isSpeaking = true;
-  const text = speechQueue.shift()!;
 
+  // If we have a pre-generated buffer, play it immediately (no gap)
+  if (nextBuffer) {
+    const buf = nextBuffer;
+    nextBuffer = null;
+    if (speechEnabled) {
+      playBuffer(buf.audioBuffer);
+      return;
+    }
+    isSpeaking = false;
+    return;
+  }
+
+  // First sentence — no pre-generated buffer yet, generate now
+  const text = speechQueue.shift()!;
   try {
     const audio = await ttsInstance.generate(text, { voice: TTS_VOICE });
     if (!speechEnabled) { isSpeaking = false; return; }
@@ -413,24 +473,7 @@ async function processSpeechQueue() {
     audioBuffer.copyToChannel(floatData, 0);
 
     if (!speechEnabled) { isSpeaking = false; return; }
-
-    const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
-
-    const gain = ctx.createGain();
-    gain.gain.value = 0.9;
-    source.connect(gain);
-    gain.connect(ctx.destination);
-
-    currentSourceNode = source;
-
-    source.onended = () => {
-      currentSourceNode = null;
-      isSpeaking = false;
-      processSpeechQueue();
-    };
-
-    source.start();
+    playBuffer(audioBuffer);
   } catch (err) {
     console.error('Kokoro TTS generation error:', err);
     currentSourceNode = null;
@@ -483,5 +526,7 @@ export function stopSpeech() {
     window.speechSynthesis.cancel();
   }
   speechQueue = [];
+  nextBuffer = null;
+  isPreGenerating = false;
   isSpeaking = false;
 }
