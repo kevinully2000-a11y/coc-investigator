@@ -364,15 +364,30 @@ export function speakText(text: string) {
 
   if (!cleaned) return;
 
-  const sentences = cleaned.match(/[^.!?]+[.!?]+/g) || [cleaned];
-  speechQueue.push(...sentences);
+  // Replace common abbreviations to avoid bad sentence splits
+  const normalized = cleaned
+    .replace(/\bSt\./g, 'St')
+    .replace(/\bDr\./g, 'Dr')
+    .replace(/\bMr\./g, 'Mr')
+    .replace(/\bMrs\./g, 'Mrs')
+    .replace(/\bMs\./g, 'Ms')
+    .replace(/\bProf\./g, 'Prof')
+    .replace(/\bVol\./g, 'Vol')
+    .replace(/\bNo\./g, 'No')
+    .replace(/\be\.g\./g, 'eg')
+    .replace(/\bi\.e\./g, 'ie');
+
+  const sentences = normalized.match(/[^.!?]+[.!?]+/g) || [normalized];
+  // Filter out very short fragments that TTS can't handle
+  const validSentences = sentences.map(s => s.trim()).filter(s => s.length > 5);
+  if (validSentences.length === 0) return;
+  speechQueue.push(...validSentences);
   processSpeechQueue();
 }
 
 async function processSpeechQueue() {
   if (isSpeaking || speechQueue.length === 0) return;
   if (!ttsInstance) {
-    // Fallback to browser TTS if Kokoro not loaded
     processSpeechQueueFallback();
     return;
   }
@@ -384,11 +399,18 @@ async function processSpeechQueue() {
     const audio = await ttsInstance.generate(text, { voice: TTS_VOICE });
     if (!speechEnabled) { isSpeaking = false; return; }
 
+    const pcmData = audio?.audio;
+    if (!pcmData || pcmData.length === 0) {
+      isSpeaking = false;
+      processSpeechQueue();
+      return;
+    }
+
     const ctx = getAudioContext();
-    const pcmData = audio.audio;
     const sampleRate = audio.sampling_rate || 24000;
-    const audioBuffer = ctx.createBuffer(1, pcmData.length, sampleRate);
-    audioBuffer.copyToChannel(new Float32Array(pcmData), 0);
+    const floatData = pcmData instanceof Float32Array ? pcmData : new Float32Array(pcmData);
+    const audioBuffer = ctx.createBuffer(1, floatData.length, sampleRate);
+    audioBuffer.copyToChannel(floatData, 0);
 
     if (!speechEnabled) { isSpeaking = false; return; }
 
