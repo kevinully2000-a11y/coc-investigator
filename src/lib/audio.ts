@@ -289,9 +289,9 @@ function stopAllSounds() {
   activeSounds.clear();
 }
 
-// ─── Kokoro TTS ───
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let ttsInstance: any = null;
+// ─── TTS via Web Worker ───
+let ttsWorker: Worker | null = null;
+let ttsReady = false;
 let ttsLoading = false;
 let ttsLoadProgress = 0;
 let speechQueue: string[] = [];
@@ -299,49 +299,102 @@ let isSpeaking = false;
 let speechEnabled = true;
 let currentSourceNode: AudioBufferSourceNode | null = null;
 
-const TTS_VOICE = 'bm_george'; // British male — horror Keeper voice
+// Pre-generation: worker generates next sentence while current plays
+let nextBuffer: { audioBuffer: AudioBuffer } | null = null;
+let preGenId = 0; // Incrementing ID to match requests/responses
+let pendingGenerations = new Map<number, 'preGen' | 'play'>(); // Track what each generation is for
 
 type ProgressCallback = (progress: number) => void;
 let onProgressCallback: ProgressCallback | null = null;
+let initResolve: (() => void) | null = null;
 
 export function isTTSLoaded(): boolean {
-  return ttsInstance !== null;
+  return ttsReady;
 }
 
 export function getTTSLoadProgress(): number {
   return ttsLoadProgress;
 }
 
+function handleWorkerMessage(e: MessageEvent) {
+  const { type } = e.data;
+
+  if (type === 'progress') {
+    ttsLoadProgress = e.data.progress;
+    onProgressCallback?.(ttsLoadProgress);
+  }
+
+  if (type === 'ready') {
+    ttsReady = true;
+    ttsLoadProgress = 100;
+    onProgressCallback?.(100);
+    onProgressCallback = null;
+    ttsLoading = false;
+    initResolve?.();
+    initResolve = null;
+  }
+
+  if (type === 'audio') {
+    const { id, pcmData, sampleRate } = e.data;
+    const purpose = pendingGenerations.get(id);
+    pendingGenerations.delete(id);
+
+    if (!speechEnabled) return;
+
+    const ctx = getAudioContext();
+    const audioBuffer = ctx.createBuffer(1, pcmData.length, sampleRate);
+    audioBuffer.copyToChannel(pcmData, 0);
+
+    if (purpose === 'preGen') {
+      nextBuffer = { audioBuffer };
+      // If we're not currently speaking, play it now
+      if (!isSpeaking) {
+        processSpeechQueue();
+      }
+    } else if (purpose === 'play') {
+      playBuffer(audioBuffer);
+    }
+  }
+
+  if (type === 'error') {
+    const { id } = e.data;
+    pendingGenerations.delete(id);
+    if (id === null) {
+      // Init error
+      ttsLoading = false;
+      onProgressCallback = null;
+      initResolve?.();
+      initResolve = null;
+    } else {
+      // Generation error — skip and continue queue
+      isSpeaking = false;
+      processSpeechQueue();
+    }
+  }
+}
+
 export async function initTTS(onProgress?: ProgressCallback): Promise<void> {
-  if (ttsInstance) return;
+  if (ttsReady) return;
   if (ttsLoading) return;
 
   ttsLoading = true;
   ttsLoadProgress = 0;
   if (onProgress) onProgressCallback = onProgress;
 
-  try {
-    const { KokoroTTS } = await import('kokoro-js');
-    ttsInstance = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
-      dtype: 'q8' as const,
-      device: 'wasm' as const,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      progress_callback: (p: any) => {
-        if (p?.progress != null) {
-          ttsLoadProgress = Math.round(p.progress);
-          onProgressCallback?.(ttsLoadProgress);
-        }
-      },
-    });
-    ttsLoadProgress = 100;
-    onProgressCallback?.(100);
-  } catch (err) {
-    console.error('Failed to load Kokoro TTS:', err);
-    ttsInstance = null;
-  } finally {
-    ttsLoading = false;
-    onProgressCallback = null;
-  }
+  return new Promise<void>((resolve) => {
+    initResolve = resolve;
+    ttsWorker = new Worker(
+      new URL('./tts-worker.ts', import.meta.url),
+      { type: 'module' }
+    );
+    ttsWorker.onmessage = handleWorkerMessage;
+    ttsWorker.onerror = () => {
+      ttsLoading = false;
+      onProgressCallback = null;
+      resolve();
+    };
+    ttsWorker.postMessage({ type: 'init' });
+  });
 }
 
 export function setSpeechEnabled(enabled: boolean) {
@@ -351,21 +404,18 @@ export function setSpeechEnabled(enabled: boolean) {
   }
 }
 
-export function speakText(text: string) {
-  if (!speechEnabled) return;
+// ─── Stream-to-Speech ───
+// Accumulates streamed text, detects sentence boundaries, queues for TTS
+let streamBuffer = '';
+let spokenSentenceCount = 0; // Track how many sentences we've already queued
 
-  const cleaned = text
-    .replace(/\*\*[A-Z_]+:.*?\*\*/g, '')
+function cleanForSpeech(text: string): string {
+  return text
+    .replace(/\*\*[A-Z_]+:.*?\*\*/g, '') // Remove metadata tags
     .replace(/\*\*/g, '')
-    .replace(/^\d+\.\s+.+$/gm, '')
+    .replace(/^\d+\.\s+.+$/gm, '') // Remove numbered lists (choices)
     .replace(/\[.*?\]/g, '')
     .replace(/#+\s*/g, '')
-    .trim();
-
-  if (!cleaned) return;
-
-  // Replace common abbreviations to avoid bad sentence splits
-  const normalized = cleaned
     .replace(/\bSt\./g, 'St')
     .replace(/\bDr\./g, 'Dr')
     .replace(/\bMr\./g, 'Mr')
@@ -375,37 +425,90 @@ export function speakText(text: string) {
     .replace(/\bVol\./g, 'Vol')
     .replace(/\bNo\./g, 'No')
     .replace(/\be\.g\./g, 'eg')
-    .replace(/\bi\.e\./g, 'ie');
+    .replace(/\bi\.e\./g, 'ie')
+    .trim();
+}
 
-  const sentences = normalized.match(/[^.!?]+[.!?]+/g) || [normalized];
-  // Filter out very short fragments that TTS can't handle
-  const validSentences = sentences.map(s => s.trim()).filter(s => s.length > 5);
-  if (validSentences.length === 0) return;
-  speechQueue.push(...validSentences);
+function extractSentences(text: string): string[] {
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+  return sentences.map(s => s.trim()).filter(s => s.length > 5);
+}
+
+export function feedStreamingText(delta: string) {
+  if (!speechEnabled) return;
+  streamBuffer += delta;
+
+  const cleaned = cleanForSpeech(streamBuffer);
+  const allSentences = extractSentences(cleaned);
+
+  // Only queue NEW sentences we haven't spoken yet
+  const newSentences = allSentences.slice(spokenSentenceCount);
+  // Don't queue the very last sentence yet — it might still be incomplete
+  // unless it clearly ends with punctuation and has more text after it
+  const safeToQueue = newSentences.length > 1 ? newSentences.slice(0, -1) : [];
+
+  if (safeToQueue.length > 0) {
+    speechQueue.push(...safeToQueue);
+    spokenSentenceCount += safeToQueue.length;
+    processSpeechQueue();
+  }
+}
+
+export function flushStreamingText() {
+  if (!speechEnabled) { resetStreamBuffer(); return; }
+
+  const cleaned = cleanForSpeech(streamBuffer);
+  const allSentences = extractSentences(cleaned);
+  const remaining = allSentences.slice(spokenSentenceCount);
+
+  if (remaining.length > 0) {
+    speechQueue.push(...remaining);
+    processSpeechQueue();
+  } else {
+    // Maybe there's a trailing fragment without punctuation
+    const lastPunctuation = cleaned.search(/[.!?][^.!?]*$/);
+    const trailing = lastPunctuation >= 0
+      ? cleaned.slice(lastPunctuation + 1).trim()
+      : cleaned.trim();
+    if (trailing.length > 5 && spokenSentenceCount === 0) {
+      // No sentences were detected at all, speak the whole thing
+      speechQueue.push(trailing);
+      processSpeechQueue();
+    }
+  }
+
+  resetStreamBuffer();
+}
+
+export function resetStreamBuffer() {
+  streamBuffer = '';
+  spokenSentenceCount = 0;
+}
+
+// Legacy function — still useful for one-shot TTS
+export function speakText(text: string) {
+  if (!speechEnabled) return;
+  const cleaned = cleanForSpeech(text);
+  if (!cleaned) return;
+  const sentences = extractSentences(cleaned);
+  if (sentences.length === 0) return;
+  speechQueue.push(...sentences);
   processSpeechQueue();
 }
 
-// Pre-generated audio buffer ready for immediate playback
-let nextBuffer: { audioBuffer: AudioBuffer } | null = null;
-let isPreGenerating = false;
+// ─── Playback Engine ───
+function requestGeneration(text: string, purpose: 'preGen' | 'play') {
+  if (!ttsWorker || !ttsReady) return;
+  const id = ++preGenId;
+  pendingGenerations.set(id, purpose);
+  ttsWorker.postMessage({ type: 'generate', id, text });
+}
 
-async function preGenerateNext() {
-  if (isPreGenerating || speechQueue.length === 0 || !ttsInstance || !speechEnabled) return;
-  isPreGenerating = true;
+function preGenerateNext() {
+  if (speechQueue.length === 0 || !ttsWorker || !ttsReady || !speechEnabled) return;
+  if (nextBuffer) return; // Already have one buffered
   const text = speechQueue.shift()!;
-  try {
-    const audio = await ttsInstance.generate(text, { voice: TTS_VOICE });
-    const pcmData = audio?.audio;
-    if (pcmData && pcmData.length > 0 && speechEnabled) {
-      const ctx = getAudioContext();
-      const sampleRate = audio.sampling_rate || 24000;
-      const floatData = pcmData instanceof Float32Array ? pcmData : new Float32Array(pcmData);
-      const audioBuffer = ctx.createBuffer(1, floatData.length, sampleRate);
-      audioBuffer.copyToChannel(floatData, 0);
-      nextBuffer = { audioBuffer };
-    }
-  } catch { /* skip failed pre-generation */ }
-  isPreGenerating = false;
+  requestGeneration(text, 'preGen');
 }
 
 function playBuffer(audioBuffer: AudioBuffer) {
@@ -419,6 +522,7 @@ function playBuffer(audioBuffer: AudioBuffer) {
   gain.connect(ctx.destination);
 
   currentSourceNode = source;
+  isSpeaking = true;
 
   // Start pre-generating the next sentence while this one plays
   preGenerateNext();
@@ -432,14 +536,12 @@ function playBuffer(audioBuffer: AudioBuffer) {
   source.start();
 }
 
-async function processSpeechQueue() {
+function processSpeechQueue() {
   if (isSpeaking || (speechQueue.length === 0 && !nextBuffer)) return;
-  if (!ttsInstance) {
+  if (!ttsWorker || !ttsReady) {
     processSpeechQueueFallback();
     return;
   }
-
-  isSpeaking = true;
 
   // If we have a pre-generated buffer, play it immediately (no gap)
   if (nextBuffer) {
@@ -449,37 +551,13 @@ async function processSpeechQueue() {
       playBuffer(buf.audioBuffer);
       return;
     }
-    isSpeaking = false;
     return;
   }
 
-  // First sentence — no pre-generated buffer yet, generate now
+  // First sentence — no pre-generated buffer yet, request from worker
   const text = speechQueue.shift()!;
-  try {
-    const audio = await ttsInstance.generate(text, { voice: TTS_VOICE });
-    if (!speechEnabled) { isSpeaking = false; return; }
-
-    const pcmData = audio?.audio;
-    if (!pcmData || pcmData.length === 0) {
-      isSpeaking = false;
-      processSpeechQueue();
-      return;
-    }
-
-    const ctx = getAudioContext();
-    const sampleRate = audio.sampling_rate || 24000;
-    const floatData = pcmData instanceof Float32Array ? pcmData : new Float32Array(pcmData);
-    const audioBuffer = ctx.createBuffer(1, floatData.length, sampleRate);
-    audioBuffer.copyToChannel(floatData, 0);
-
-    if (!speechEnabled) { isSpeaking = false; return; }
-    playBuffer(audioBuffer);
-  } catch (err) {
-    console.error('Kokoro TTS generation error:', err);
-    currentSourceNode = null;
-    isSpeaking = false;
-    processSpeechQueue();
-  }
+  isSpeaking = true; // Mark as speaking so we don't double-process
+  requestGeneration(text, 'play');
 }
 
 // Browser TTS fallback (used if Kokoro model hasn't loaded yet)
@@ -521,12 +599,17 @@ export function stopSpeech() {
     try { currentSourceNode.stop(); } catch { /* already stopped */ }
     currentSourceNode = null;
   }
+  // Cancel pending worker generations
+  if (ttsWorker) {
+    ttsWorker.postMessage({ type: 'cancel' });
+  }
+  pendingGenerations.clear();
   // Stop browser TTS fallback
   if (window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
   speechQueue = [];
   nextBuffer = null;
-  isPreGenerating = false;
   isSpeaking = false;
+  resetStreamBuffer();
 }

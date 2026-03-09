@@ -1,20 +1,34 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Toaster } from 'sonner';
-import type { Investigator, TabType } from './lib/types';
+import type { Investigator, SavedInvestigator, TabType } from './lib/types';
+import { saveCharacter, getCharacter, listCharacters } from './lib/storage';
 import CreateInvestigator from './components/CreateInvestigator';
 import CharacterSheet from './components/CharacterSheet';
+import CharacterLibrary from './components/CharacterLibrary';
 import DiceRoller from './components/DiceRoller';
 import PlayMode from './components/PlayMode';
 import Button from './components/Button';
 
 export default function App() {
   const [tab, setTab] = useState<TabType>('home');
-  const [investigator, setInvestigator] = useState<Investigator | null>(null);
+  const [activeCharacterId, setActiveCharacterId] = useState<string | null>(() => {
+    // Restore last active character
+    const chars = listCharacters();
+    return chars.length > 0 ? chars[chars.length - 1].id : null;
+  });
 
-  const handleCreate = (inv: Investigator) => {
-    setInvestigator(inv);
+  const activeCharacter = activeCharacterId ? getCharacter(activeCharacterId) : null;
+
+  const handleCreate = useCallback((inv: Investigator) => {
+    const saved = saveCharacter(inv);
+    setActiveCharacterId(saved.id);
     setTab('sheet');
-  };
+  }, []);
+
+  const handleSelectCharacter = useCallback((char: SavedInvestigator) => {
+    setActiveCharacterId(char.id);
+    setTab('play');
+  }, []);
 
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
@@ -78,9 +92,17 @@ export default function App() {
               &#x25B6; Play
             </Button>
             <Button
+              variant={tab === 'library' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setTab('library')}
+              className="font-display text-xs"
+            >
+              Library
+            </Button>
+            <Button
               variant={tab === 'create' || tab === 'sheet' ? 'default' : 'ghost'}
               size="sm"
-              onClick={() => setTab(investigator ? 'sheet' : 'create')}
+              onClick={() => setTab(activeCharacter ? 'sheet' : 'create')}
               className="font-display text-xs"
             >
               Investigator
@@ -122,10 +144,10 @@ export default function App() {
               <Button
                 size="lg"
                 variant="outline"
-                onClick={() => setTab('create')}
+                onClick={() => setTab('library')}
                 className="font-display px-8 border-[hsl(var(--primary))] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))] hover:text-[hsl(var(--primary-foreground))]"
               >
-                &#x2726; Create Investigator
+                &#x1F4DC; Investigator Library
               </Button>
               <Button
                 size="lg"
@@ -145,14 +167,28 @@ export default function App() {
           </div>
         )}
 
+        {/* Library */}
+        {tab === 'library' && (
+          <CharacterLibrary
+            onSelect={handleSelectCharacter}
+            onNewInvestigator={() => setTab('create')}
+            activeCharacterId={activeCharacterId ?? undefined}
+          />
+        )}
+
         {/* Play */}
-        {tab === 'play' && <PlayMode investigator={investigator} onNeedInvestigator={() => setTab('create')} />}
+        {tab === 'play' && (
+          <PlayMode
+            investigator={activeCharacter}
+            onNeedInvestigator={() => setTab('create')}
+          />
+        )}
 
         {/* Create */}
         {tab === 'create' && <CreateInvestigator onComplete={handleCreate} />}
 
         {/* Sheet */}
-        {tab === 'sheet' && investigator && (
+        {tab === 'sheet' && activeCharacter && (
           <div className="space-y-4">
             <Button
               variant="ghost"
@@ -162,7 +198,7 @@ export default function App() {
             >
               &larr; New Investigator
             </Button>
-            <CharacterSheet investigator={investigator} />
+            <CharacterSheet investigator={activeCharacter} />
           </div>
         )}
 

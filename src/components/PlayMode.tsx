@@ -1,19 +1,25 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { toast } from 'sonner';
-import type { Investigator, ChatMessage, Scenario, MoodType } from '../lib/types';
+import type { Investigator, SavedInvestigator, ChatMessage, Scenario, MoodType, GameSession } from '../lib/types';
 import { SCENARIOS, rollDice, checkResult } from '../lib/gameData';
 import { streamGameMaster } from '../lib/api';
-import { startAmbient, stopAmbient, changeMood, stopSpeech, speakText, setSpeechEnabled, initTTS, isTTSLoaded } from '../lib/audio';
+import { startAmbient, stopAmbient, changeMood, stopSpeech, setSpeechEnabled, initTTS, isTTSLoaded, feedStreamingText, flushStreamingText, resetStreamBuffer } from '../lib/audio';
+import { saveSession, getSession, updateCharacter } from '../lib/storage';
 import Button from './Button';
 
 interface Props {
-  investigator: Investigator | null;
+  investigator: (SavedInvestigator | Investigator) | null;
   onNeedInvestigator: () => void;
+}
+
+function isSavedInvestigator(inv: Investigator | SavedInvestigator): inv is SavedInvestigator {
+  return 'id' in inv && 'createdAt' in inv;
 }
 
 export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
   const [scenario, setScenario] = useState<Scenario | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [sanity, setSanity] = useState(investigator?.derived.SAN ?? 0);
@@ -25,9 +31,29 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
   const [ttsProgress, setTtsProgress] = useState(0);
   const [mood, setMood] = useState<MoodType>('calm');
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Keep a ref to latest messages/sanity/hp for session saving
+  const stateRef = useRef({ messages, sanity, hp, mood, gameOver });
+  stateRef.current = { messages, sanity, hp, mood, gameOver };
 
   useEffect(() => {
     if (investigator) {
+      // Check for active session to resume
+      if (isSavedInvestigator(investigator) && investigator.activeSessionId) {
+        const session = getSession(investigator.activeSessionId);
+        if (session && !session.gameOver) {
+          const scn = SCENARIOS.find(s => s.id === session.scenarioId);
+          if (scn) {
+            setScenario(scn);
+            setSessionId(session.id);
+            setMessages(session.messages);
+            setSanity(session.sanity);
+            setHp(session.hp);
+            setMood(session.mood);
+            setGameOver(session.gameOver);
+            return;
+          }
+        }
+      }
       setSanity(investigator.derived.SAN);
       setHp(investigator.derived.HP);
     }
@@ -38,6 +64,25 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
   }, [messages]);
 
   useEffect(() => () => { stopAmbient(); stopSpeech(); }, []);
+
+  // Auto-save session when state changes (debounced by streaming end)
+  const persistSession = useCallback(() => {
+    if (!investigator || !isSavedInvestigator(investigator) || !scenario || !sessionId) return;
+    const { messages: msgs, sanity: san, hp: h, mood: m, gameOver: go } = stateRef.current;
+    const session: GameSession = {
+      id: sessionId,
+      characterId: investigator.id,
+      scenarioId: scenario.id,
+      messages: msgs,
+      sanity: san,
+      hp: h,
+      mood: m,
+      gameOver: go,
+      updatedAt: Date.now(),
+    };
+    saveSession(session);
+    updateCharacter(investigator.id, { activeSessionId: sessionId });
+  }, [investigator, scenario, sessionId]);
 
   const toggleAmbient = useCallback(() => {
     if (ambientOn) {
@@ -74,6 +119,8 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
       return;
     }
     setScenario(s);
+    const newSessionId = crypto.randomUUID();
+    setSessionId(newSessionId);
     setMessages([]);
     setGameOver(false);
     setSanity(investigator.derived.SAN);
@@ -100,6 +147,7 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
   const sendToKeeper = (msgs: ChatMessage[], scn: Scenario) => {
     setIsStreaming(true);
     stopSpeech();
+    resetStreamBuffer();
     let fullText = '';
 
     streamGameMaster({
@@ -121,10 +169,14 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
           setMood(detectedMood);
           changeMood(detectedMood);
         }
+
+        // Feed TTS during streaming for immediate narration
+        if (narrationOn) feedStreamingText(delta);
       },
       onDone: () => {
         setIsStreaming(false);
-        if (narrationOn) speakText(fullText);
+        // Flush any remaining text to TTS
+        if (narrationOn) flushStreamingText();
 
         if (fullText.includes('**GAME_OVER:')) {
           setGameOver(true);
@@ -149,6 +201,10 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
             toast.error(`SAN Check Failed! Rolled ${roll} vs ${sanity}. Lost ${loss} Sanity.`);
           }
         }
+
+        // Persist session after each Keeper response
+        // Use setTimeout to let state updates settle
+        setTimeout(() => persistSession(), 100);
       },
       onError: (msg) => {
         setIsStreaming(false);
@@ -187,6 +243,17 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
     sendMessage(
       `[I attempt a ${skillName} check. I rolled ${roll} against my skill of ${target}%. Result: ${result}. ${success ? 'I succeed.' : 'I fail.'}]`
     );
+  };
+
+  const exitScenario = () => {
+    persistSession();
+    setScenario(null);
+    setSessionId(null);
+    setMessages([]);
+    setGameOver(false);
+    stopAmbient();
+    stopSpeech();
+    setAmbientOn(false);
   };
 
   const cleanMoodTags = (text: string) =>
@@ -283,14 +350,7 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setScenario(null);
-              setMessages([]);
-              setGameOver(false);
-              stopAmbient();
-              stopSpeech();
-              setAmbientOn(false);
-            }}
+            onClick={exitScenario}
             className="font-display text-xs"
           >
             &larr; Exit
@@ -391,17 +451,7 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
         {gameOver ? (
           <div className="text-center space-y-3">
             <p className="font-display text-lg text-[hsl(var(--secondary))]">The story has ended.</p>
-            <Button
-              onClick={() => {
-                setScenario(null);
-                setMessages([]);
-                setGameOver(false);
-                stopAmbient();
-                stopSpeech();
-                setAmbientOn(false);
-              }}
-              className="font-display"
-            >
+            <Button onClick={exitScenario} className="font-display">
               Choose Another Scenario
             </Button>
           </div>

@@ -64,4 +64,23 @@ export interface ChatMessage {
 
 export type MoodType = 'calm' | 'tense' | 'dread' | 'panic' | 'otherworldly';
 
-export type TabType = 'home' | 'play' | 'create' | 'sheet' | 'dice';
+export type TabType = 'home' | 'library' | 'play' | 'create' | 'sheet' | 'dice';
+
+// ─── Persistence Types ───
+export interface SavedInvestigator extends Investigator {
+  id: string;
+  createdAt: number;
+  activeSessionId?: string;
+}
+
+export interface GameSession {
+  id: string;
+  characterId: string;
+  scenarioId: string;
+  messages: ChatMessage[];
+  sanity: number;
+  hp: number;
+  mood: MoodType;
+  gameOver: boolean;
+  updatedAt: number;
+}
