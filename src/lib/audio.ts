@@ -289,22 +289,70 @@ function stopAllSounds() {
   activeSounds.clear();
 }
 
-// ─── Speech Synthesis ───
+// ─── Kokoro TTS ───
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let ttsInstance: any = null;
+let ttsLoading = false;
+let ttsLoadProgress = 0;
 let speechQueue: string[] = [];
 let isSpeaking = false;
 let speechEnabled = true;
+let currentSourceNode: AudioBufferSourceNode | null = null;
+
+const TTS_VOICE = 'bm_george'; // British male — horror Keeper voice
+
+type ProgressCallback = (progress: number) => void;
+let onProgressCallback: ProgressCallback | null = null;
+
+export function isTTSLoaded(): boolean {
+  return ttsInstance !== null;
+}
+
+export function getTTSLoadProgress(): number {
+  return ttsLoadProgress;
+}
+
+export async function initTTS(onProgress?: ProgressCallback): Promise<void> {
+  if (ttsInstance) return;
+  if (ttsLoading) return;
+
+  ttsLoading = true;
+  ttsLoadProgress = 0;
+  if (onProgress) onProgressCallback = onProgress;
+
+  try {
+    const { KokoroTTS } = await import('kokoro-js');
+    ttsInstance = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
+      dtype: 'q8' as const,
+      device: 'wasm' as const,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      progress_callback: (p: any) => {
+        if (p?.progress != null) {
+          ttsLoadProgress = Math.round(p.progress);
+          onProgressCallback?.(ttsLoadProgress);
+        }
+      },
+    });
+    ttsLoadProgress = 100;
+    onProgressCallback?.(100);
+  } catch (err) {
+    console.error('Failed to load Kokoro TTS:', err);
+    ttsInstance = null;
+  } finally {
+    ttsLoading = false;
+    onProgressCallback = null;
+  }
+}
 
 export function setSpeechEnabled(enabled: boolean) {
   speechEnabled = enabled;
   if (!enabled) {
-    window.speechSynthesis.cancel();
-    speechQueue = [];
-    isSpeaking = false;
+    stopSpeech();
   }
 }
 
 export function speakText(text: string) {
-  if (!speechEnabled || !window.speechSynthesis) return;
+  if (!speechEnabled) return;
 
   const cleaned = text
     .replace(/\*\*[A-Z_]+:.*?\*\*/g, '')
@@ -321,10 +369,58 @@ export function speakText(text: string) {
   processSpeechQueue();
 }
 
-function processSpeechQueue() {
+async function processSpeechQueue() {
   if (isSpeaking || speechQueue.length === 0) return;
-  isSpeaking = true;
+  if (!ttsInstance) {
+    // Fallback to browser TTS if Kokoro not loaded
+    processSpeechQueueFallback();
+    return;
+  }
 
+  isSpeaking = true;
+  const text = speechQueue.shift()!;
+
+  try {
+    const audio = await ttsInstance.generate(text, { voice: TTS_VOICE });
+    if (!speechEnabled) { isSpeaking = false; return; }
+
+    const wavData = audio.toWav();
+    const ctx = getAudioContext();
+    const audioBuffer = await ctx.decodeAudioData(wavData.buffer.slice(0));
+
+    if (!speechEnabled) { isSpeaking = false; return; }
+
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+
+    const gain = ctx.createGain();
+    gain.gain.value = 0.9;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+
+    currentSourceNode = source;
+
+    source.onended = () => {
+      currentSourceNode = null;
+      isSpeaking = false;
+      processSpeechQueue();
+    };
+
+    source.start();
+  } catch (err) {
+    console.error('Kokoro TTS generation error:', err);
+    currentSourceNode = null;
+    isSpeaking = false;
+    processSpeechQueue();
+  }
+}
+
+// Browser TTS fallback (used if Kokoro model hasn't loaded yet)
+function processSpeechQueueFallback() {
+  if (isSpeaking || speechQueue.length === 0) return;
+  if (!window.speechSynthesis) return;
+
+  isSpeaking = true;
   const text = speechQueue.shift()!;
   const utterance = new SpeechSynthesisUtterance(text);
 
@@ -342,18 +438,26 @@ function processSpeechQueue() {
 
   utterance.onend = () => {
     isSpeaking = false;
-    processSpeechQueue();
+    processSpeechQueueFallback();
   };
   utterance.onerror = () => {
     isSpeaking = false;
-    processSpeechQueue();
+    processSpeechQueueFallback();
   };
 
   window.speechSynthesis.speak(utterance);
 }
 
 export function stopSpeech() {
-  window.speechSynthesis.cancel();
+  // Stop Kokoro playback
+  if (currentSourceNode) {
+    try { currentSourceNode.stop(); } catch { /* already stopped */ }
+    currentSourceNode = null;
+  }
+  // Stop browser TTS fallback
+  if (window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
   speechQueue = [];
   isSpeaking = false;
 }

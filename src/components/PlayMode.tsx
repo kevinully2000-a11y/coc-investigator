@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import type { Investigator, ChatMessage, Scenario, MoodType } from '../lib/types';
 import { SCENARIOS, rollDice, checkResult } from '../lib/gameData';
 import { streamGameMaster } from '../lib/api';
-import { startAmbient, stopAmbient, changeMood, stopSpeech, speakText, setSpeechEnabled } from '../lib/audio';
+import { startAmbient, stopAmbient, changeMood, stopSpeech, speakText, setSpeechEnabled, initTTS, isTTSLoaded } from '../lib/audio';
 import Button from './Button';
 
 interface Props {
@@ -21,6 +21,8 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
   const [gameOver, setGameOver] = useState(false);
   const [ambientOn, setAmbientOn] = useState(false);
   const [narrationOn, setNarrationOn] = useState(true);
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsProgress, setTtsProgress] = useState(0);
   const [mood, setMood] = useState<MoodType>('calm');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -47,12 +49,19 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
     }
   }, [ambientOn, mood]);
 
-  const toggleNarration = useCallback(() => {
+  const toggleNarration = useCallback(async () => {
     const next = !narrationOn;
     setNarrationOn(next);
     setSpeechEnabled(next);
-    if (!next) stopSpeech();
-  }, [narrationOn]);
+    if (!next) {
+      stopSpeech();
+    } else if (!isTTSLoaded() && !ttsLoading) {
+      setTtsLoading(true);
+      setTtsProgress(0);
+      await initTTS((p) => setTtsProgress(p));
+      setTtsLoading(false);
+    }
+  }, [narrationOn, ttsLoading]);
 
   const parseMood = (text: string): MoodType | null => {
     const match = text.match(/\*\*MOOD:\s*(calm|tense|dread|panic|otherworldly)\*\*/);
@@ -72,6 +81,13 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
     startAmbient('tense');
     setAmbientOn(true);
     setMood('tense');
+
+    // Preload TTS model in background
+    if (!isTTSLoaded() && !ttsLoading) {
+      setTtsLoading(true);
+      setTtsProgress(0);
+      initTTS((p) => setTtsProgress(p)).then(() => setTtsLoading(false));
+    }
 
     const firstMsg: ChatMessage = {
       role: 'user',
@@ -297,9 +313,23 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
             size="icon"
             onClick={toggleNarration}
             title={narrationOn ? 'Mute narration' : 'Enable narration'}
+            disabled={ttsLoading}
           >
-            {narrationOn ? '\u{1F399}' : '\u{1F515}'}
+            {ttsLoading ? '\u231B' : narrationOn ? '\u{1F399}' : '\u{1F515}'}
           </Button>
+          {ttsLoading && (
+            <div className="flex items-center gap-1.5">
+              <div className="w-16 h-1.5 bg-[hsl(var(--muted))] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[hsl(var(--primary))] transition-all duration-300"
+                  style={{ width: `${ttsProgress}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-mono text-[hsl(var(--muted-foreground))] animate-pulse">
+                Keeper awakens...
+              </span>
+            </div>
+          )}
           <div className="flex gap-3 text-xs font-mono">
             <span>
               SAN: <strong className={sanity < 20 ? 'text-blood' : ''}>{sanity}</strong>
