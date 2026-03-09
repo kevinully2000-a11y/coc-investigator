@@ -1,0 +1,141 @@
+import { useState } from 'react';
+import { Toaster } from 'sonner';
+import type { Investigator, TabType } from './lib/types';
+import CreateInvestigator from './components/CreateInvestigator';
+import CharacterSheet from './components/CharacterSheet';
+import DiceRoller from './components/DiceRoller';
+import PlayMode from './components/PlayMode';
+import Button from './components/Button';
+
+export default function App() {
+  const [tab, setTab] = useState<TabType>('home');
+  const [investigator, setInvestigator] = useState<Investigator | null>(null);
+
+  const handleCreate = (inv: Investigator) => {
+    setInvestigator(inv);
+    setTab('sheet');
+  };
+
+  return (
+    <div className="min-h-screen bg-[hsl(var(--background))]">
+      <Toaster
+        position="top-center"
+        toastOptions={{
+          style: {
+            background: 'hsl(200 12% 12%)',
+            color: 'hsl(45 20% 85%)',
+            border: '1px solid hsl(200 10% 20%)',
+          },
+        }}
+      />
+
+      {/* Navigation */}
+      <nav className="border-b border-[hsl(var(--border))] bg-[hsl(var(--card))]/80 backdrop-blur-sm sticky top-0 z-50">
+        <div className="max-w-5xl mx-auto flex items-center justify-between h-14 px-4">
+          <button
+            onClick={() => setTab('home')}
+            className="font-display font-bold text-lg text-eldritch-glow tracking-tight cursor-pointer bg-transparent border-none"
+          >
+            &#x2726; Call of Cthulhu
+          </button>
+
+          <div className="flex gap-1">
+            <Button
+              variant={tab === 'play' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setTab('play')}
+              className="font-display text-xs"
+            >
+              &#x25B6; Play
+            </Button>
+            <Button
+              variant={tab === 'create' || tab === 'sheet' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setTab(investigator ? 'sheet' : 'create')}
+              className="font-display text-xs"
+            >
+              Investigator
+            </Button>
+            <Button
+              variant={tab === 'dice' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setTab('dice')}
+              className="font-display text-xs"
+            >
+              Dice
+            </Button>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <main className="max-w-5xl mx-auto px-4 py-8">
+        {/* Home */}
+        {tab === 'home' && (
+          <div className="flex flex-col items-center justify-center min-h-[70vh] text-center space-y-8 animate-fade-in-up">
+            <div className="space-y-4">
+              <h1 className="text-5xl sm:text-6xl font-display font-black text-eldritch-glow leading-tight">
+                Call of Cthulhu
+              </h1>
+              <p className="text-xl font-display text-[hsl(var(--secondary))]">Investigator Companion</p>
+              <p className="text-[hsl(var(--muted-foreground))] max-w-md mx-auto leading-relaxed">
+                Generate investigators, play solo horror adventures with an AI Keeper, and roll your fate. A
+                companion for the Call of Cthulhu RPG.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Button size="lg" onClick={() => setTab('play')} className="font-display px-8">
+                &#x25B6; Play a Scenario
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={() => setTab('create')}
+                className="font-display px-8 border-[hsl(var(--primary))] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))] hover:text-[hsl(var(--primary-foreground))]"
+              >
+                &#x2726; Create Investigator
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={() => setTab('dice')}
+                className="font-display px-8 border-[hsl(var(--secondary))] text-[hsl(var(--secondary))] hover:bg-[hsl(var(--secondary))] hover:text-[hsl(var(--secondary-foreground))]"
+              >
+                &#x1F3B2; Dice Roller
+              </Button>
+            </div>
+
+            <div className="text-xs text-[hsl(var(--muted-foreground))] mt-12 font-mono opacity-50">
+              "Ph'nglui mglw'nafh Cthulhu R'lyeh wgah'nagl fhtagn"
+            </div>
+          </div>
+        )}
+
+        {/* Play */}
+        {tab === 'play' && <PlayMode investigator={investigator} onNeedInvestigator={() => setTab('create')} />}
+
+        {/* Create */}
+        {tab === 'create' && <CreateInvestigator onComplete={handleCreate} />}
+
+        {/* Sheet */}
+        {tab === 'sheet' && investigator && (
+          <div className="space-y-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTab('create')}
+              className="font-display text-xs"
+            >
+              &larr; New Investigator
+            </Button>
+            <CharacterSheet investigator={investigator} />
+          </div>
+        )}
+
+        {/* Dice */}
+        {tab === 'dice' && <DiceRoller />}
+      </main>
+    </div>
+  );
+}
