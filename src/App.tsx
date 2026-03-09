@@ -63,7 +63,7 @@ export default function App() {
         <div className="max-w-5xl mx-auto flex items-center justify-between h-12 px-4">
           <button
             onClick={() => setTab('home')}
-            className="font-display font-bold text-lg text-eldritch-glow tracking-tight cursor-pointer bg-transparent border-none"
+            className="font-cthulhu text-lg text-[hsl(var(--blood))] tracking-tight cursor-pointer bg-transparent border-none"
           >
             &#x2726; Call of Cthulhu
           </button>
@@ -101,19 +101,21 @@ export default function App() {
       <main className="max-w-5xl mx-auto px-4 py-8">
         {/* Home */}
         {tab === 'home' && (
-          <div className="flex flex-col items-center justify-center min-h-[70vh] text-center space-y-8 animate-fade-in-up">
-            <div className="space-y-4">
-              <h1 className="text-5xl sm:text-6xl font-display font-black text-eldritch-glow leading-tight">
+          <div className="flex flex-col items-center justify-center min-h-[70vh] text-center space-y-10 px-6 animate-fade-in-up">
+            <div className="space-y-5">
+              <h1 className="text-5xl sm:text-7xl text-cthulhu-title leading-tight">
                 Call of Cthulhu
               </h1>
-              <p className="text-xl font-display text-[hsl(var(--secondary))]">AI-Generated Adventures</p>
-              <p className="text-[hsl(var(--muted-foreground))] max-w-md mx-auto leading-relaxed">
-                Play solo horror adventures with an AI Keeper, generate investigators, and roll your fate.
-                AI-generated Call of Cthulhu RPG adventures.
+              <p className="text-xl font-display text-[hsl(var(--secondary))] tracking-wide">
+                AI-Generated Adventures
+              </p>
+              <p className="text-[hsl(var(--muted-foreground))] max-w-lg mx-auto leading-relaxed">
+                Play solo horror adventures with an AI Keeper, generate investigators,
+                and roll your fate. AI-generated Call of Cthulhu RPG adventures.
               </p>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row gap-4">
               <Button size="lg" onClick={() => setTab('play')} className="font-display px-8">
                 &#x25B6; Play a Scenario
               </Button>
@@ -135,9 +137,9 @@ export default function App() {
               </Button>
             </div>
 
-            <div className="text-xs text-[hsl(var(--muted-foreground))] mt-12 font-mono opacity-50">
-              "Ph'nglui mglw'nafh Cthulhu R'lyeh wgah'nagl fhtagn"
-            </div>
+            <p className="text-xs text-[hsl(var(--muted-foreground))] mt-16 font-mono opacity-40 tracking-[0.25em] italic">
+              &ldquo; Ph&rsquo;nglui mglw&rsquo;nafh Cthulhu R&rsquo;lyeh wgah&rsquo;nagl fhtagn &rdquo;
+            </p>
           </div>
         )}
 

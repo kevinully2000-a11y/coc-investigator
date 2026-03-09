@@ -19,12 +19,12 @@ interface Props {
 
 export default function CreateInvestigator({ onComplete }: Props) {
   const [step, setStep] = useState<'info' | 'stats' | 'review'>('info');
-  const [name, setName] = useState('');
+  const [name, setName] = useState('Harvey Walters');
   const [age, setAge] = useState(25);
   const [occupation, setOccupation] = useState('Private Investigator');
   const [era, setEra] = useState('1920s Classic');
-  const [residence, setResidence] = useState('');
-  const [birthplace, setBirthplace] = useState('');
+  const [residence, setResidence] = useState('Arkham, MA');
+  const [birthplace, setBirthplace] = useState('Boston, MA');
   const [chars, setChars] = useState<ReturnType<typeof rollCharacteristics> | null>(null);
   const [isRolling, setIsRolling] = useState(false);
 
@@ -97,7 +97,7 @@ export default function CreateInvestigator({ onComplete }: Props) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="font-display text-sm">Name</label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Harvey Walters" />
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
             </div>
             <div className="space-y-2">
               <label className="font-display text-sm">Age</label>
@@ -119,11 +119,11 @@ export default function CreateInvestigator({ onComplete }: Props) {
             </div>
             <div className="space-y-2">
               <label className="font-display text-sm">Residence</label>
-              <Input value={residence} onChange={(e) => setResidence(e.target.value)} placeholder="Arkham, MA" />
+              <Input value={residence} onChange={(e) => setResidence(e.target.value)} />
             </div>
             <div className="space-y-2">
               <label className="font-display text-sm">Birthplace</label>
-              <Input value={birthplace} onChange={(e) => setBirthplace(e.target.value)} placeholder="Boston, MA" />
+              <Input value={birthplace} onChange={(e) => setBirthplace(e.target.value)} />
             </div>
           </div>
 

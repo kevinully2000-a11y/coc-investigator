@@ -45,6 +45,16 @@ body {
 /* ─── Custom Utility Classes ─── */
 .font-display { font-family: "Playfair Display", serif; }
 .font-body { font-family: "Crimson Text", serif; }
+.font-cthulhu { font-family: "JMH Cthulhumbus UG", "Playfair Display", serif; }
+
+.text-cthulhu-title {
+  font-family: "JMH Cthulhumbus UG", "Playfair Display", serif;
+  color: hsl(0 65% 40%);
+  text-shadow:
+    0 0 20px hsl(0 65% 40% / 0.4),
+    0 2px 4px hsl(0 0% 0% / 0.6);
+  letter-spacing: 0.04em;
+}
 
 .text-eldritch-glow {
   color: hsl(var(--eldritch-glow));
