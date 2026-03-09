@@ -39,7 +39,7 @@ export default function App() {
             <span className="text-amber-400 font-bold">&#9672;</span>
             <span>MedicalPKM</span>
             <span className="text-slate-500 mx-1">/</span>
-            <span className="text-slate-300 text-sm font-medium">CoC Investigator</span>
+            <span className="text-slate-300 text-sm font-medium">Cthulhu Investigator</span>
           </a>
           <div className="flex items-center gap-1">
             <a
@@ -106,10 +106,10 @@ export default function App() {
               <h1 className="text-5xl sm:text-6xl font-display font-black text-eldritch-glow leading-tight">
                 Call of Cthulhu
               </h1>
-              <p className="text-xl font-display text-[hsl(var(--secondary))]">Investigator Companion</p>
+              <p className="text-xl font-display text-[hsl(var(--secondary))]">AI-Generated Adventures</p>
               <p className="text-[hsl(var(--muted-foreground))] max-w-md mx-auto leading-relaxed">
-                Generate investigators, play solo horror adventures with an AI Keeper, and roll your fate. A
-                companion for the Call of Cthulhu RPG.
+                Play solo horror adventures with an AI Keeper, generate investigators, and roll your fate.
+                AI-generated Call of Cthulhu RPG adventures.
               </p>
             </div>
 
