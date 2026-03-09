@@ -17,14 +17,34 @@ interface Props {
   onComplete: (investigator: Investigator) => void;
 }
 
+const INVESTIGATOR_PRESETS = [
+  { name: 'Harvey Walters', age: 42, residence: 'Arkham, MA', birthplace: 'Boston, MA' },
+  { name: 'Eleanor Marsh', age: 31, residence: 'Innsmouth, MA', birthplace: 'Kingsport, MA' },
+  { name: 'Thomas Malone', age: 38, residence: 'Brooklyn, NY', birthplace: 'New York, NY' },
+  { name: 'Agnes Baker', age: 27, residence: 'Salem, MA', birthplace: 'Providence, RI' },
+  { name: 'Randolph Carter', age: 34, residence: 'Boston, MA', birthplace: 'Arkham, MA' },
+  { name: 'Gloria Goldberg', age: 29, residence: 'Chicago, IL', birthplace: 'Philadelphia, PA' },
+  { name: 'Silas Bishop', age: 45, residence: 'Dunwich, MA', birthplace: 'Aylesbury, MA' },
+  { name: 'Miriam Beecher', age: 33, residence: 'Providence, RI', birthplace: 'Newport, RI' },
+  { name: 'Jack Walters', age: 36, residence: 'Arkham, MA', birthplace: 'Hartford, CT' },
+  { name: 'Daisy Walker', age: 24, residence: 'Cambridge, MA', birthplace: 'Concord, MA' },
+  { name: 'Rex Murphy', age: 30, residence: 'New Orleans, LA', birthplace: 'Baton Rouge, LA' },
+  { name: 'Vivian Atwood', age: 28, residence: 'San Francisco, CA', birthplace: 'Portland, OR' },
+];
+
+function randomPreset() {
+  return INVESTIGATOR_PRESETS[Math.floor(Math.random() * INVESTIGATOR_PRESETS.length)];
+}
+
 export default function CreateInvestigator({ onComplete }: Props) {
   const [step, setStep] = useState<'info' | 'stats' | 'review'>('info');
-  const [name, setName] = useState('Harvey Walters');
-  const [age, setAge] = useState(25);
+  const [preset] = useState(randomPreset);
+  const [name, setName] = useState(preset.name);
+  const [age, setAge] = useState(preset.age);
   const [occupation, setOccupation] = useState('Private Investigator');
   const [era, setEra] = useState('1920s Classic');
-  const [residence, setResidence] = useState('Arkham, MA');
-  const [birthplace, setBirthplace] = useState('Boston, MA');
+  const [residence, setResidence] = useState(preset.residence);
+  const [birthplace, setBirthplace] = useState(preset.birthplace);
   const [chars, setChars] = useState<ReturnType<typeof rollCharacteristics> | null>(null);
   const [isRolling, setIsRolling] = useState(false);
 
