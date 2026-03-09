@@ -29,9 +29,38 @@ export default function App() {
         }}
       />
 
-      {/* Navigation */}
-      <nav className="border-b border-[hsl(var(--border))] bg-[hsl(var(--card))]/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto flex items-center justify-between h-14 px-4">
+      {/* Suite Navigation */}
+      <nav className="bg-[#1e293b] h-10 flex items-center px-4 z-50">
+        <div className="max-w-5xl mx-auto w-full flex items-center justify-between">
+          <a
+            href="https://medicalpkm.com"
+            className="flex items-center gap-1.5 text-white no-underline text-sm font-semibold tracking-tight"
+          >
+            <span className="text-amber-400 font-bold">&#9672;</span>
+            <span>MedicalPKM</span>
+            <span className="text-slate-500 mx-1">/</span>
+            <span className="text-slate-300 text-sm font-medium">CoC Investigator</span>
+          </a>
+          <div className="flex items-center gap-1">
+            <a
+              href="https://kol.medicalpkm.com"
+              className="text-slate-400 no-underline text-xs font-medium px-2 py-1 rounded hover:text-white hover:bg-white/10 transition-colors"
+            >
+              KOL Briefs
+            </a>
+            <a
+              href="https://medicalpkm.com/apps/shared/fountain-pen/"
+              className="text-slate-400 no-underline text-xs font-medium px-2 py-1 rounded hover:text-white hover:bg-white/10 transition-colors"
+            >
+              Fountain Pen
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      {/* App Navigation */}
+      <nav className="border-b border-[hsl(var(--border))] bg-[hsl(var(--card))]/80 backdrop-blur-sm sticky top-10 z-40">
+        <div className="max-w-5xl mx-auto flex items-center justify-between h-12 px-4">
           <button
             onClick={() => setTab('home')}
             className="font-display font-bold text-lg text-eldritch-glow tracking-tight cursor-pointer bg-transparent border-none"
