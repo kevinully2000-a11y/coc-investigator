@@ -384,9 +384,11 @@ async function processSpeechQueue() {
     const audio = await ttsInstance.generate(text, { voice: TTS_VOICE });
     if (!speechEnabled) { isSpeaking = false; return; }
 
-    const wavData = audio.toWav();
     const ctx = getAudioContext();
-    const audioBuffer = await ctx.decodeAudioData(wavData.buffer.slice(0));
+    const pcmData = audio.data;
+    const sampleRate = 24000; // Kokoro outputs 24kHz
+    const audioBuffer = ctx.createBuffer(1, pcmData.length, sampleRate);
+    audioBuffer.copyToChannel(new Float32Array(pcmData), 0);
 
     if (!speechEnabled) { isSpeaking = false; return; }
 
