@@ -385,8 +385,8 @@ async function processSpeechQueue() {
     if (!speechEnabled) { isSpeaking = false; return; }
 
     const ctx = getAudioContext();
-    const pcmData = audio.data;
-    const sampleRate = 24000; // Kokoro outputs 24kHz
+    const pcmData = audio.audio;
+    const sampleRate = audio.sampling_rate || 24000;
     const audioBuffer = ctx.createBuffer(1, pcmData.length, sampleRate);
     audioBuffer.copyToChannel(new Float32Array(pcmData), 0);
 
