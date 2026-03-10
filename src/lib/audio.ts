@@ -299,10 +299,12 @@ let isSpeaking = false;
 let speechEnabled = true;
 let currentSourceNode: AudioBufferSourceNode | null = null;
 
-// Pre-generation: worker generates next sentence while current plays
-let nextBuffer: { audioBuffer: AudioBuffer } | null = null;
-let preGenId = 0; // Incrementing ID to match requests/responses
-let pendingGenerations = new Map<number, 'preGen' | 'play'>(); // Track what each generation is for
+// Pre-generation pipeline: queue of ready-to-play buffers + active generation
+const readyBuffers: AudioBuffer[] = [];  // Pre-generated buffers waiting to play
+let isGenerating = false;                // Worker is currently generating audio
+let preGenId = 0;
+let pendingGenerations = new Map<number, 'preGen' | 'play'>();
+const BATCH_SENTENCES = 3;              // Sentences per TTS call (longer audio = fewer gaps)
 
 type ProgressCallback = (progress: number) => void;
 let onProgressCallback: ProgressCallback | null = null;
@@ -327,7 +329,8 @@ function handleWorkerMessage(e: MessageEvent) {
   if (type === 'ready') {
     ttsReady = true;
     ttsLoadProgress = 100;
-    console.log('[TTS] Kokoro worker READY');
+    const device = e.data.device || 'wasm';
+    console.log(`[TTS] Kokoro worker READY (${device})`);
     onProgressCallback?.(100);
     onProgressCallback = null;
     ttsLoading = false;
@@ -339,6 +342,7 @@ function handleWorkerMessage(e: MessageEvent) {
     const { id, pcmData, sampleRate } = e.data;
     const purpose = pendingGenerations.get(id);
     pendingGenerations.delete(id);
+    isGenerating = false;
 
     if (!speechEnabled) return;
 
@@ -347,12 +351,15 @@ function handleWorkerMessage(e: MessageEvent) {
     audioBuffer.copyToChannel(pcmData, 0);
 
     if (purpose === 'preGen') {
-      nextBuffer = { audioBuffer };
-      // If we're not currently speaking, play it now
+      readyBuffers.push(audioBuffer);
+      // Keep the worker busy — generate more if queue has sentences
+      pumpGenerationPipeline();
+      // If nothing is playing, start now
       if (!isSpeaking) {
         processSpeechQueue();
       }
     } else if (purpose === 'play') {
+      // First buffer — start playing and kick off pre-generation pipeline
       playBuffer(audioBuffer);
     }
   }
@@ -369,7 +376,9 @@ function handleWorkerMessage(e: MessageEvent) {
       initResolve = null;
     } else {
       // Generation error — skip and continue queue
+      isGenerating = false;
       isSpeaking = false;
+      pumpGenerationPipeline();
       processSpeechQueue();
     }
   }
@@ -503,14 +512,23 @@ function requestGeneration(text: string, purpose: 'preGen' | 'play') {
   if (!ttsWorker || !ttsReady) return;
   const id = ++preGenId;
   pendingGenerations.set(id, purpose);
+  isGenerating = true;
   ttsWorker.postMessage({ type: 'generate', id, text });
 }
 
-function preGenerateNext() {
-  if (speechQueue.length === 0 || !ttsWorker || !ttsReady || !speechEnabled) return;
-  if (nextBuffer) return; // Already have one buffered
-  const text = speechQueue.shift()!;
-  requestGeneration(text, 'preGen');
+/** Take a batch of sentences from the queue and send to worker */
+function takeBatch(): string | null {
+  if (speechQueue.length === 0) return null;
+  const count = Math.min(BATCH_SENTENCES, speechQueue.length);
+  return speechQueue.splice(0, count).join(' ');
+}
+
+/** Keep the worker busy generating ahead of playback */
+function pumpGenerationPipeline() {
+  if (isGenerating || !ttsWorker || !ttsReady || !speechEnabled) return;
+  if (speechQueue.length === 0) return;
+  const text = takeBatch();
+  if (text) requestGeneration(text, 'preGen');
 }
 
 function playBuffer(audioBuffer: AudioBuffer) {
@@ -526,8 +544,8 @@ function playBuffer(audioBuffer: AudioBuffer) {
   currentSourceNode = source;
   isSpeaking = true;
 
-  // Start pre-generating the next sentence while this one plays
-  preGenerateNext();
+  // Keep the worker generating while this plays
+  pumpGenerationPipeline();
 
   source.onended = () => {
     currentSourceNode = null;
@@ -539,26 +557,26 @@ function playBuffer(audioBuffer: AudioBuffer) {
 }
 
 function processSpeechQueue() {
-  if (isSpeaking || (speechQueue.length === 0 && !nextBuffer)) return;
+  if (isSpeaking || (speechQueue.length === 0 && readyBuffers.length === 0)) return;
   if (!ttsWorker || !ttsReady) {
     processSpeechQueueFallback();
     return;
   }
 
-  // If we have a pre-generated buffer, play it immediately (no gap)
-  if (nextBuffer) {
-    const buf = nextBuffer;
-    nextBuffer = null;
+  // Play next pre-generated buffer immediately (no gap)
+  if (readyBuffers.length > 0) {
+    const buf = readyBuffers.shift()!;
     if (speechEnabled) {
-      playBuffer(buf.audioBuffer);
+      playBuffer(buf);
       return;
     }
     return;
   }
 
-  // First sentence — no pre-generated buffer yet, request from worker
-  const text = speechQueue.shift()!;
-  isSpeaking = true; // Mark as speaking so we don't double-process
+  // No pre-generated buffer — request from worker directly
+  const text = takeBatch();
+  if (!text) return;
+  isSpeaking = true;
   requestGeneration(text, 'play');
 }
 
@@ -606,12 +624,13 @@ export function stopSpeech() {
     ttsWorker.postMessage({ type: 'cancel' });
   }
   pendingGenerations.clear();
+  isGenerating = false;
   // Stop browser TTS fallback
   if (window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
   speechQueue = [];
-  nextBuffer = null;
+  readyBuffers.length = 0;
   isSpeaking = false;
   resetStreamBuffer();
 }
