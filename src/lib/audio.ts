@@ -289,124 +289,48 @@ function stopAllSounds() {
   activeSounds.clear();
 }
 
-// ─── TTS via Web Worker ───
-let ttsWorker: Worker | null = null;
+// ─── TTS via OpenAI API ───
+// Cloud-based TTS: no model loading, <1s latency per sentence
 let ttsReady = false;
-let ttsLoading = false;
-let ttsLoadProgress = 0;
 let speechQueue: string[] = [];
 let isSpeaking = false;
 let speechEnabled = true;
 let currentSourceNode: AudioBufferSourceNode | null = null;
 
-// Pre-generation pipeline: queue of ready-to-play buffers + active generation
-const readyBuffers: AudioBuffer[] = [];  // Pre-generated buffers waiting to play
-let isGenerating = false;                // Worker is currently generating audio
-let preGenId = 0;
-let pendingGenerations = new Map<number, 'preGen' | 'play'>();
-const BATCH_SENTENCES = 3;              // Sentences per TTS call (longer audio = fewer gaps)
-
-type ProgressCallback = (progress: number) => void;
-let onProgressCallback: ProgressCallback | null = null;
-let initResolve: (() => void) | null = null;
+// Pre-generation pipeline: fetch next audio while current plays
+const readyBuffers: AudioBuffer[] = [];
+let isGenerating = false;
+let cancelled = false;
+const BATCH_SENTENCES = 3;
 
 export function isTTSLoaded(): boolean {
   return ttsReady;
 }
 
 export function getTTSLoadProgress(): number {
-  return ttsLoadProgress;
+  return ttsReady ? 100 : 0;
 }
 
-function handleWorkerMessage(e: MessageEvent) {
-  const { type } = e.data;
-
-  if (type === 'progress') {
-    ttsLoadProgress = e.data.progress;
-    onProgressCallback?.(ttsLoadProgress);
-  }
-
-  if (type === 'ready') {
-    ttsReady = true;
-    ttsLoadProgress = 100;
-    const device = e.data.device || 'wasm';
-    console.log(`[TTS] Kokoro worker READY (${device})`);
-    onProgressCallback?.(100);
-    onProgressCallback = null;
-    ttsLoading = false;
-    initResolve?.();
-    initResolve = null;
-  }
-
-  if (type === 'audio') {
-    const { id, pcmData, sampleRate } = e.data;
-    const purpose = pendingGenerations.get(id);
-    pendingGenerations.delete(id);
-    isGenerating = false;
-
-    if (!speechEnabled) return;
-
-    const ctx = getAudioContext();
-    const audioBuffer = ctx.createBuffer(1, pcmData.length, sampleRate);
-    audioBuffer.copyToChannel(pcmData, 0);
-
-    if (purpose === 'preGen') {
-      readyBuffers.push(audioBuffer);
-      // Keep the worker busy — generate more if queue has sentences
-      pumpGenerationPipeline();
-      // If nothing is playing, start now
-      if (!isSpeaking) {
-        processSpeechQueue();
-      }
-    } else if (purpose === 'play') {
-      // First buffer — start playing and kick off pre-generation pipeline
-      playBuffer(audioBuffer);
-    }
-  }
-
-  if (type === 'error') {
-    const { id, message } = e.data;
-    console.error('[TTS] Worker error:', message, 'id:', id);
-    pendingGenerations.delete(id);
-    if (id === null) {
-      // Init error
-      ttsLoading = false;
-      onProgressCallback = null;
-      initResolve?.();
-      initResolve = null;
-    } else {
-      // Generation error — skip and continue queue
-      isGenerating = false;
-      isSpeaking = false;
-      pumpGenerationPipeline();
-      processSpeechQueue();
-    }
-  }
-}
-
-export async function initTTS(onProgress?: ProgressCallback): Promise<void> {
+/** Cloud TTS needs no model loading — just mark ready */
+export async function initTTS(onProgress?: (p: number) => void): Promise<void> {
   if (ttsReady) return;
-  if (ttsLoading) return;
+  ttsReady = true;
+  onProgress?.(100);
+  console.log('[TTS] Cloud TTS ready (OpenAI)');
+}
 
-  ttsLoading = true;
-  ttsLoadProgress = 0;
-  if (onProgress) onProgressCallback = onProgress;
-
-  return new Promise<void>((resolve) => {
-    initResolve = resolve;
-    ttsWorker = new Worker(
-      new URL('./tts-worker.ts', import.meta.url),
-      { type: 'module' }
-    );
-    ttsWorker.onmessage = handleWorkerMessage;
-    ttsWorker.onerror = (ev) => {
-      console.error('[TTS] Worker load error:', ev.message, ev.filename, ev.lineno);
-      ttsLoading = false;
-      onProgressCallback = null;
-      resolve();
-    };
-    ttsWorker.postMessage({ type: 'init' });
+/** Call the /api/tts serverless function and decode the MP3 response */
+async function generateSpeechAPI(text: string, signal?: AbortSignal): Promise<AudioBuffer> {
+  const res = await fetch('/api/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+    signal,
   });
+  if (!res.ok) throw new Error(`TTS API ${res.status}`);
+  const arrayBuffer = await res.arrayBuffer();
+  const ctx = getAudioContext();
+  return ctx.decodeAudioData(arrayBuffer);
 }
 
 export function setSpeechEnabled(enabled: boolean) {
@@ -508,24 +432,44 @@ export function speakText(text: string) {
 }
 
 // ─── Playback Engine ───
-function requestGeneration(text: string, purpose: 'preGen' | 'play') {
-  if (!ttsWorker || !ttsReady) return;
-  const id = ++preGenId;
-  pendingGenerations.set(id, purpose);
-  isGenerating = true;
-  ttsWorker.postMessage({ type: 'generate', id, text });
-}
 
-/** Take a batch of sentences from the queue and send to worker */
+/** Take a batch of sentences from the queue */
 function takeBatch(): string | null {
   if (speechQueue.length === 0) return null;
   const count = Math.min(BATCH_SENTENCES, speechQueue.length);
   return speechQueue.splice(0, count).join(' ');
 }
 
-/** Keep the worker busy generating ahead of playback */
+/** Fire-and-forget: send text to API, handle result when it arrives */
+function requestGeneration(text: string, purpose: 'preGen' | 'play') {
+  if (!ttsReady) return;
+  isGenerating = true;
+  cancelled = false;
+
+  generateSpeechAPI(text).then(audioBuffer => {
+    isGenerating = false;
+    if (cancelled || !speechEnabled) return;
+
+    if (purpose === 'preGen') {
+      readyBuffers.push(audioBuffer);
+      pumpGenerationPipeline();
+      if (!isSpeaking) processSpeechQueue();
+    } else {
+      playBuffer(audioBuffer);
+    }
+  }).catch(err => {
+    isGenerating = false;
+    if (cancelled) return;
+    console.error('[TTS] API error:', err);
+    // Fall back to browser speech on API failure
+    if (purpose === 'play') isSpeaking = false;
+    processSpeechQueueFallback();
+  });
+}
+
+/** Keep the API busy generating ahead of playback */
 function pumpGenerationPipeline() {
-  if (isGenerating || !ttsWorker || !ttsReady || !speechEnabled) return;
+  if (isGenerating || !ttsReady || !speechEnabled) return;
   if (speechQueue.length === 0) return;
   const text = takeBatch();
   if (text) requestGeneration(text, 'preGen');
@@ -544,7 +488,7 @@ function playBuffer(audioBuffer: AudioBuffer) {
   currentSourceNode = source;
   isSpeaking = true;
 
-  // Keep the worker generating while this plays
+  // Start generating next audio while this plays
   pumpGenerationPipeline();
 
   source.onended = () => {
@@ -558,7 +502,7 @@ function playBuffer(audioBuffer: AudioBuffer) {
 
 function processSpeechQueue() {
   if (isSpeaking || (speechQueue.length === 0 && readyBuffers.length === 0)) return;
-  if (!ttsWorker || !ttsReady) {
+  if (!ttsReady) {
     processSpeechQueueFallback();
     return;
   }
@@ -573,7 +517,7 @@ function processSpeechQueue() {
     return;
   }
 
-  // No pre-generated buffer — request from worker directly
+  // No pre-generated buffer — request directly
   const text = takeBatch();
   if (!text) return;
   isSpeaking = true;
@@ -614,16 +558,13 @@ function processSpeechQueueFallback() {
 }
 
 export function stopSpeech() {
-  // Stop Kokoro playback
+  // Stop current audio playback
   if (currentSourceNode) {
     try { currentSourceNode.stop(); } catch { /* already stopped */ }
     currentSourceNode = null;
   }
-  // Cancel pending worker generations
-  if (ttsWorker) {
-    ttsWorker.postMessage({ type: 'cancel' });
-  }
-  pendingGenerations.clear();
+  // Cancel any in-flight API requests
+  cancelled = true;
   isGenerating = false;
   // Stop browser TTS fallback
   if (window.speechSynthesis) {
