@@ -1,7 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import OpenAI from 'openai';
-
-const client = new OpenAI(); // Uses OPENAI_API_KEY env var
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -9,6 +6,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      console.error('OPENAI_API_KEY is not set');
+      return res.status(500).json({ error: 'TTS service not configured (missing API key)' });
+    }
+
     const { text, voice = 'onyx', speed = 0.92 } = req.body;
 
     if (!text || typeof text !== 'string') {
@@ -17,6 +20,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Cap input to avoid runaway costs (TTS-1 limit is 4096 chars)
     const input = text.slice(0, 4096);
+
+    // Lazy-init OpenAI client (avoids module-level crash if key missing)
+    const OpenAI = (await import('openai')).default;
+    const client = new OpenAI({ apiKey });
 
     const mp3 = await client.audio.speech.create({
       model: 'tts-1',
