@@ -357,7 +357,8 @@ function handleWorkerMessage(e: MessageEvent) {
   }
 
   if (type === 'error') {
-    const { id } = e.data;
+    const { id, message } = e.data;
+    console.error('[TTS] Worker error:', message, 'id:', id);
     pendingGenerations.delete(id);
     if (id === null) {
       // Init error
@@ -388,7 +389,8 @@ export async function initTTS(onProgress?: ProgressCallback): Promise<void> {
       { type: 'module' }
     );
     ttsWorker.onmessage = handleWorkerMessage;
-    ttsWorker.onerror = () => {
+    ttsWorker.onerror = (ev) => {
+      console.error('[TTS] Worker load error:', ev.message, ev.filename, ev.lineno);
       ttsLoading = false;
       onProgressCallback = null;
       resolve();

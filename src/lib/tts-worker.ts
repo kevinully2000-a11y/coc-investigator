@@ -16,6 +16,17 @@ self.onmessage = async (e: MessageEvent) => {
       return;
     }
     try {
+      // Configure ONNX Runtime BEFORE loading Kokoro:
+      // 1. Single-threaded mode — avoids SharedArrayBuffer requirement
+      //    (SharedArrayBuffer needs COOP/COEP headers which break CF Access)
+      // 2. Disable proxy worker — we're already in a Web Worker,
+      //    nested workers can fail and are unnecessary here
+      const { env } = await import('@huggingface/transformers');
+      if (env.backends?.onnx?.wasm) {
+        env.backends.onnx.wasm.numThreads = 1;
+        env.backends.onnx.wasm.proxy = false;
+      }
+
       const { KokoroTTS } = await import('kokoro-js');
       ttsInstance = await KokoroTTS.from_pretrained(
         'onnx-community/Kokoro-82M-v1.0-ONNX',
