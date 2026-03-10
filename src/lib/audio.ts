@@ -327,6 +327,7 @@ function handleWorkerMessage(e: MessageEvent) {
   if (type === 'ready') {
     ttsReady = true;
     ttsLoadProgress = 100;
+    console.log('[TTS] Kokoro worker READY');
     onProgressCallback?.(100);
     onProgressCallback = null;
     ttsLoading = false;
@@ -437,7 +438,7 @@ function extractSentences(text: string): string[] {
 }
 
 export function feedStreamingText(delta: string) {
-  if (!speechEnabled) return;
+  if (!speechEnabled) { console.log('[TTS] feedStreamingText: speechEnabled=false, skipping'); return; }
   streamBuffer += delta;
 
   const cleaned = cleanForSpeech(streamBuffer);
@@ -450,6 +451,7 @@ export function feedStreamingText(delta: string) {
   const safeToQueue = newSentences.length > 1 ? newSentences.slice(0, -1) : [];
 
   if (safeToQueue.length > 0) {
+    console.log('[TTS] feedStreamingText: queuing', safeToQueue.length, 'sentences, queue size:', speechQueue.length + safeToQueue.length);
     speechQueue.push(...safeToQueue);
     spokenSentenceCount += safeToQueue.length;
     processSpeechQueue();
@@ -457,11 +459,12 @@ export function feedStreamingText(delta: string) {
 }
 
 export function flushStreamingText() {
-  if (!speechEnabled) { resetStreamBuffer(); return; }
+  if (!speechEnabled) { console.log('[TTS] flushStreamingText: speechEnabled=false'); resetStreamBuffer(); return; }
 
   const cleaned = cleanForSpeech(streamBuffer);
   const allSentences = extractSentences(cleaned);
   const remaining = allSentences.slice(spokenSentenceCount);
+  console.log('[TTS] flushStreamingText: total sentences:', allSentences.length, 'spoken:', spokenSentenceCount, 'remaining:', remaining.length);
 
   if (remaining.length > 0) {
     speechQueue.push(...remaining);
@@ -539,11 +542,16 @@ function playBuffer(audioBuffer: AudioBuffer) {
 }
 
 function processSpeechQueue() {
-  if (isSpeaking || (speechQueue.length === 0 && !nextBuffer)) return;
+  if (isSpeaking || (speechQueue.length === 0 && !nextBuffer)) {
+    console.log('[TTS] processSpeechQueue: skip (isSpeaking:', isSpeaking, 'queueLen:', speechQueue.length, 'nextBuffer:', !!nextBuffer, ')');
+    return;
+  }
   if (!ttsWorker || !ttsReady) {
+    console.log('[TTS] processSpeechQueue: fallback (worker:', !!ttsWorker, 'ready:', ttsReady, ')');
     processSpeechQueueFallback();
     return;
   }
+  console.log('[TTS] processSpeechQueue: using Kokoro, queue:', speechQueue.length);
 
   // If we have a pre-generated buffer, play it immediately (no gap)
   if (nextBuffer) {
@@ -565,10 +573,11 @@ function processSpeechQueue() {
 // Browser TTS fallback (used if Kokoro model hasn't loaded yet)
 function processSpeechQueueFallback() {
   if (isSpeaking || speechQueue.length === 0) return;
-  if (!window.speechSynthesis) return;
+  if (!window.speechSynthesis) { console.log('[TTS] fallback: no speechSynthesis'); return; }
 
   isSpeaking = true;
   const text = speechQueue.shift()!;
+  console.log('[TTS] fallback speaking:', text.slice(0, 60) + '...');
   const utterance = new SpeechSynthesisUtterance(text);
 
   const voice = window.speechSynthesis.getVoices().find(
