@@ -50,6 +50,12 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
             setHp(session.hp);
             setMood(session.mood);
             setGameOver(session.gameOver);
+            // Preload TTS model for resumed sessions
+            if (!isTTSLoaded() && !ttsLoading) {
+              setTtsLoading(true);
+              setTtsProgress(0);
+              initTTS((p) => setTtsProgress(p)).then(() => setTtsLoading(false));
+            }
             return;
           }
         }
