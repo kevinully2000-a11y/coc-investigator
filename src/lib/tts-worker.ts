@@ -41,6 +41,8 @@ self.onmessage = async (e: MessageEvent) => {
           },
         }
       );
+      // Clear any stale cancel flag from stopSpeech() called during init
+      cancelled = false;
       self.postMessage({ type: 'ready' });
     } catch (err) {
       self.postMessage({ type: 'error', id: null, message: String(err) });
