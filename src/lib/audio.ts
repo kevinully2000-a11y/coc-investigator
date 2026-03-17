@@ -379,9 +379,17 @@ export function feedStreamingText(delta: string) {
 
   // Only queue NEW sentences we haven't spoken yet
   const newSentences = allSentences.slice(spokenSentenceCount);
-  // Don't queue the very last sentence yet — it might still be incomplete
-  // unless it clearly ends with punctuation and has more text after it
-  const safeToQueue = newSentences.length > 1 ? newSentences.slice(0, -1) : [];
+
+  // For the very first sentence, queue it immediately once complete
+  // so narration starts as soon as possible. For subsequent sentences,
+  // hold back the last one since it might still be incomplete.
+  let safeToQueue: string[];
+  if (spokenSentenceCount === 0 && newSentences.length >= 1) {
+    // Queue the first sentence right away; hold back the rest's tail
+    safeToQueue = newSentences.length > 1 ? newSentences.slice(0, -1) : [newSentences[0]];
+  } else {
+    safeToQueue = newSentences.length > 1 ? newSentences.slice(0, -1) : [];
+  }
 
   if (safeToQueue.length > 0) {
     speechQueue.push(...safeToQueue);
