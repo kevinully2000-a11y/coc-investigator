@@ -6,9 +6,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.Narration;
     if (!apiKey) {
-      console.error('OPENAI_API_KEY is not set');
+      console.error('Narration env var is not set');
       return res.status(500).json({ error: 'TTS service not configured (missing API key)' });
     }
 
