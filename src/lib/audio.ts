@@ -11,7 +11,7 @@ function getAudioContext(): AudioContext {
   if (!audioCtx) {
     audioCtx = new AudioContext();
     masterGain = audioCtx.createGain();
-    masterGain.gain.value = 0.3;
+    masterGain.gain.value = 0.15;
     masterGain.connect(audioCtx.destination);
   }
   if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -303,6 +303,15 @@ let isGenerating = false;
 let cancelled = false;
 const BATCH_SENTENCES = 3;
 
+// Callback fired when the very first TTS audio starts playing
+let onFirstSpeechCallback: (() => void) | null = null;
+let hasSpokenOnce = false;
+
+export function setOnFirstSpeech(cb: () => void) {
+  onFirstSpeechCallback = cb;
+  hasSpokenOnce = false;
+}
+
 export function isTTSLoaded(): boolean {
   return ttsReady;
 }
@@ -379,9 +388,17 @@ export function feedStreamingText(delta: string) {
 
   // Only queue NEW sentences we haven't spoken yet
   const newSentences = allSentences.slice(spokenSentenceCount);
-  // Don't queue the very last sentence yet — it might still be incomplete
-  // unless it clearly ends with punctuation and has more text after it
-  const safeToQueue = newSentences.length > 1 ? newSentences.slice(0, -1) : [];
+
+  // For the very first sentence, queue it immediately once complete
+  // so narration starts as soon as possible. For subsequent sentences,
+  // hold back the last one since it might still be incomplete.
+  let safeToQueue: string[];
+  if (spokenSentenceCount === 0 && newSentences.length >= 1) {
+    // Queue the first sentence right away; hold back the rest's tail
+    safeToQueue = newSentences.length > 1 ? newSentences.slice(0, -1) : [newSentences[0]];
+  } else {
+    safeToQueue = newSentences.length > 1 ? newSentences.slice(0, -1) : [];
+  }
 
   if (safeToQueue.length > 0) {
     speechQueue.push(...safeToQueue);
@@ -488,6 +505,13 @@ function playBuffer(audioBuffer: AudioBuffer) {
   currentSourceNode = source;
   isSpeaking = true;
 
+  // Fire the first-speech callback to sync ambient audio start
+  if (!hasSpokenOnce && onFirstSpeechCallback) {
+    hasSpokenOnce = true;
+    onFirstSpeechCallback();
+    onFirstSpeechCallback = null;
+  }
+
   // Start generating next audio while this plays
   pumpGenerationPipeline();
 
@@ -573,5 +597,7 @@ export function stopSpeech() {
   speechQueue = [];
   readyBuffers.length = 0;
   isSpeaking = false;
+  hasSpokenOnce = false;
+  onFirstSpeechCallback = null;
   resetStreamBuffer();
 }
