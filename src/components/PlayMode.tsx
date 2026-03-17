@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import type { Investigator, SavedInvestigator, ChatMessage, Scenario, MoodType, GameSession } from '../lib/types';
 import { SCENARIOS, rollDice, checkResult } from '../lib/gameData';
 import { streamGameMaster } from '../lib/api';
-import { startAmbient, stopAmbient, changeMood, stopSpeech, setSpeechEnabled, initTTS, isTTSLoaded, feedStreamingText, flushStreamingText, resetStreamBuffer } from '../lib/audio';
+import { startAmbient, stopAmbient, changeMood, stopSpeech, setSpeechEnabled, initTTS, isTTSLoaded, feedStreamingText, flushStreamingText, resetStreamBuffer, setOnFirstSpeech } from '../lib/audio';
 import { saveSession, getSession, updateCharacter } from '../lib/storage';
 import Button from './Button';
 
@@ -131,9 +131,19 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
     setGameOver(false);
     setSanity(investigator.derived.SAN);
     setHp(investigator.derived.HP);
-    startAmbient('tense');
-    setAmbientOn(true);
     setMood('tense');
+
+    // If narration is on, defer ambient until first TTS plays so both start together.
+    // If narration is off, start ambient immediately.
+    if (narrationOn) {
+      setOnFirstSpeech(() => {
+        startAmbient('tense');
+        setAmbientOn(true);
+      });
+    } else {
+      startAmbient('tense');
+      setAmbientOn(true);
+    }
 
     // Preload TTS model in background
     if (!isTTSLoaded() && !ttsLoading) {

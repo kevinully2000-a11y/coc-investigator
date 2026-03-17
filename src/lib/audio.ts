@@ -303,6 +303,15 @@ let isGenerating = false;
 let cancelled = false;
 const BATCH_SENTENCES = 3;
 
+// Callback fired when the very first TTS audio starts playing
+let onFirstSpeechCallback: (() => void) | null = null;
+let hasSpokenOnce = false;
+
+export function setOnFirstSpeech(cb: () => void) {
+  onFirstSpeechCallback = cb;
+  hasSpokenOnce = false;
+}
+
 export function isTTSLoaded(): boolean {
   return ttsReady;
 }
@@ -496,6 +505,13 @@ function playBuffer(audioBuffer: AudioBuffer) {
   currentSourceNode = source;
   isSpeaking = true;
 
+  // Fire the first-speech callback to sync ambient audio start
+  if (!hasSpokenOnce && onFirstSpeechCallback) {
+    hasSpokenOnce = true;
+    onFirstSpeechCallback();
+    onFirstSpeechCallback = null;
+  }
+
   // Start generating next audio while this plays
   pumpGenerationPipeline();
 
@@ -581,5 +597,7 @@ export function stopSpeech() {
   speechQueue = [];
   readyBuffers.length = 0;
   isSpeaking = false;
+  hasSpokenOnce = false;
+  onFirstSpeechCallback = null;
   resetStreamBuffer();
 }
