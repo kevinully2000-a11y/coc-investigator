@@ -133,18 +133,6 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
     setHp(investigator.derived.HP);
     setMood('tense');
 
-    // If narration is on, defer ambient until first TTS plays so both start together.
-    // If narration is off, start ambient immediately.
-    if (narrationOn) {
-      setOnFirstSpeech(() => {
-        startAmbient('tense');
-        setAmbientOn(true);
-      });
-    } else {
-      startAmbient('tense');
-      setAmbientOn(true);
-    }
-
     // Preload TTS model in background
     if (!isTTSLoaded() && !ttsLoading) {
       setTtsLoading(true);
@@ -158,6 +146,19 @@ export default function PlayMode({ investigator, onNeedInvestigator }: Props) {
     };
     setMessages([firstMsg]);
     sendToKeeper([firstMsg], s);
+
+    // Register the first-speech callback AFTER sendToKeeper, because
+    // sendToKeeper calls stopSpeech() which clears onFirstSpeechCallback.
+    // This is safe: the async stream won't fire onDelta before this runs.
+    if (narrationOn) {
+      setOnFirstSpeech(() => {
+        startAmbient('tense');
+        setAmbientOn(true);
+      });
+    } else {
+      startAmbient('tense');
+      setAmbientOn(true);
+    }
   };
 
   const sendToKeeper = (msgs: ChatMessage[], scn: Scenario) => {
